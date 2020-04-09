@@ -38,7 +38,7 @@ static DWORD WINAPI WebSocketThread(LPVOID)
 	std::unordered_set<std::string> unloadedPlugins;
 	while (ws->getReadyState() != WebSocket::CLOSED)
 	{
-		ws->poll();
+		ws->poll(20);
 		ws->dispatch([&unloadedPlugins](const std::string& message)
 		{
 			auto colonIdx = message.find(':');

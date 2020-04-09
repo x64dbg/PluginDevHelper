@@ -31,8 +31,16 @@ namespace PluginDevBuildTool
             var fileInfo = new FileInfo(pluginPath);
             if (!fileInfo.Exists)
             {
-                Console.WriteLine($"PluginDevBuildTool: \"{pluginPath}\" does not exist!");
-                return 1;
+                if (action == "unload")
+                {
+                    // No destination file = nothing to unload because it doesn't exist
+                    return 0;
+                }
+                else
+                {
+                    Console.WriteLine($"PluginDevBuildTool: \"{pluginPath}\" does not exist!");
+                    return 1;
+                }
             }
 
             bool CanOpenExclusively()
