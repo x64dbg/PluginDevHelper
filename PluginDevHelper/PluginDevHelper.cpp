@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <atomic>
+#include <thread>
 #include <unordered_set>
 
 #include "easywsclient.hpp"
@@ -20,6 +21,7 @@ static std::atomic_bool bStopWebSocketThread;
 static wchar_t pluginDir[MAX_PATH];
 
 #define WEBSOCKET_URL "ws://localhost:4649/PluginDevHelper"
+#define MAX_RETRIES 50
 
 static bool FileExists(const wchar_t* fileName)
 {
@@ -27,19 +29,9 @@ static bool FileExists(const wchar_t* fileName)
 	return (attrib != INVALID_FILE_ATTRIBUTES && !(attrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 
-static DWORD WINAPI WebSocketThread(LPVOID)
-{
-	std::unique_ptr<WebSocket> ws(WebSocket::from_url(WEBSOCKET_URL));
-	if (!ws)
-	{
-		dprintf("Failed to connect to %s\n", WEBSOCKET_URL);
-		return 0;
-	}
-	std::unordered_set<std::string> unloadedPlugins;
-	while (ws->getReadyState() != WebSocket::CLOSED)
-	{
-		ws->poll(20);
-		ws->dispatch([&unloadedPlugins](const std::string& message)
+static void HandleMessage(std::unique_ptr<WebSocket> &ws, std::unordered_set<std::string> &unloadedPlugins) {
+	ws->poll(20);
+	ws->dispatch([&unloadedPlugins](const std::string& message)
 		{
 			auto colonIdx = message.find(':');
 			if (colonIdx != std::string::npos)
@@ -108,8 +100,41 @@ static DWORD WINAPI WebSocketThread(LPVOID)
 				dputs("Failed to split on ':'");
 			}
 		});
-		if (bStopWebSocketThread && ws->getReadyState() != WebSocket::CLOSING)
+}
+
+// return false once websocket is closing because of failure
+static bool ConnectToSocket() {
+	std::unique_ptr<WebSocket> ws(WebSocket::from_url(WEBSOCKET_URL));
+	if (!ws)
+	{
+		dprintf("Failed to connect to %s\n", WEBSOCKET_URL);
+		return false;
+	}
+	std::unordered_set<std::string> unloadedPlugins;
+	while (ws->getReadyState() != WebSocket::CLOSED)
+	{
+		HandleMessage(ws, unloadedPlugins);
+		if (bStopWebSocketThread && ws->getReadyState() != WebSocket::CLOSING) {
 			ws->close();
+			// received a signal to close it ourselves, do not retry
+			return true;
+		}
+		
+	}
+	return false;
+}
+
+static DWORD WINAPI WebSocketThread(LPVOID)
+{
+	using namespace std::chrono_literals;
+	// this can happen when code becomes stale and we need to re-establish connection again
+	int curRetry = 0;
+	while (curRetry < MAX_RETRIES) {
+		std::this_thread::sleep_for(500ms);
+		// connection successful or stop signal received after retry
+		if (ConnectToSocket() || bStopWebSocketThread) {
+			return 0;
+		}
 	}
 	return 0;
 }
